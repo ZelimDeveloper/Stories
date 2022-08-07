@@ -1,0 +1,163 @@
+@Composable
+fun PromoStories(
+    storiesList: List<StoryModel>,
+    stepDuration: Int = 5_000,
+    onStepChanged: (position: Int)-> Unit = {},
+    onFinished: ()-> Unit) {
+
+    val images = remember { storiesList }
+    val stepCount = images.size
+    val currentStep = remember { mutableStateOf(globalSelectedStories) }
+    val isPaused = remember { mutableStateOf(false) }
+    var palette by remember { mutableStateOf<Palette?>(null) }
+    val systemUiController: SystemUiController = rememberSystemUiController()
+    val darkTheme = isSystemInDarkTheme()
+
+    DisposableEffect(Unit) {
+        systemUiController.setSystemBarsColor(Color.Transparent)
+        onDispose {
+          if (!darkTheme) systemUiController.setSystemBarsColor(Color.White, darkIcons = true)
+          else systemUiController.setSystemBarsColor(darkThemeBackground, darkIcons = false)
+        }
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize())
+    {
+        val imageModifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit)
+            {
+                detectTapGestures(
+                    onTap = { offset ->
+                        currentStep.value = if (offset.x < constraints.maxWidth / 2) {
+                            max(0, currentStep.value - 1)
+
+                        } else {
+                            min(stepCount - 1, currentStep.value + 1)
+                        }
+                        isPaused.value = false
+                    },
+
+                    onPress = {
+                        try {
+                            isPaused.value = true
+                            awaitRelease()
+                        } finally {
+                            isPaused.value = false
+                        }
+                    }
+                )
+            }
+
+            val requestBuilder = Glide.with(LocalView.current)
+                .asBitmap()
+                .thumbnail(0.1f)
+                .transition(BitmapTransitionOptions.withCrossFade(10000))
+
+            CompositionLocalProvider(LocalGlideRequestBuilder provides requestBuilder) {
+                GlideImage(
+                    imageModel = "$API_BASE_URL/${images[currentStep.value].fullImage}",
+                    modifier = imageModifier,
+                    contentScale = ContentScale.FillHeight,
+                    loading = { isPaused.value = true; CircularProgressIndicator(color = GreenColorGradientStart, modifier = Modifier.align(Alignment.Center))},
+                    bitmapPalette = BitmapPalette { palette = it },
+                    success = { _success ->
+                        isPaused.value = false
+                        Image(
+                            bitmap = _success.imageBitmap!!,
+                            contentDescription = null,
+                            modifier = imageModifier,
+                            contentScale = ContentScale.FillHeight)
+                    },
+                    failure = { ReloadStoriesIcon() }
+                )
+            }
+           BlackWhiteVerticalGradBackground()
+
+            Column(modifier = Modifier.fillMaxWidth())
+            {
+                    InstagramProgressIndicator(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(5.dp)
+                            .statusBarsPadding(),
+                        stepCount = stepCount,
+                        stepDuration = stepDuration ,
+                        unSelectedColor = Color.LightGray.copy(0.5f),
+                        selectedColor = Color.White,
+                        currentStep = currentStep.value,
+                        onStepChanged = { currentStep.value = it; onStepChanged(it)},
+                        isPaused = isPaused,
+                        onComplete = onFinished)
+
+                IconButton(onClick = onFinished, modifier = Modifier
+                    .size(50.dp)
+                    .padding(end = 15.dp)
+                    .align(Alignment.End))
+                {
+                    Icon(painter = painterResource(R.drawable.ic_close_icon), contentDescription = "", tint = Color.White )
+                }
+            }
+    }
+}
+
+@Composable
+fun InstagramProgressIndicator(
+    modifier: Modifier = Modifier,
+    stepCount: Int,
+    stepDuration: Int,
+    unSelectedColor: Color,
+    selectedColor: Color,
+    currentStep: Int,
+    onStepChanged: (Int) -> Unit,
+    isPaused: MutableState<Boolean> ,
+    onComplete: () -> Unit)
+{
+    val currentStepState = remember(currentStep) { mutableStateOf(currentStep) }
+    val progress = remember(currentStep) { Animatable(0f) }
+
+    Row(modifier = modifier)
+    {
+        for (i in 0 until stepCount) {
+            val stepProgress = when {
+                i == currentStepState.value -> progress.value
+                i > currentStepState.value -> 0f
+                else -> 1f
+            }
+            LinearProgressIndicator(
+                color = selectedColor,
+                backgroundColor = unSelectedColor,
+                progress = stepProgress,
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(2.dp)
+                    .height(2.dp) //Indicator height
+            )
+        }
+    }
+
+    LaunchedEffect(isPaused.value, currentStep)
+    {
+        if (isPaused.value) {
+            progress.stop()
+
+        } else {
+            for (i in currentStep until stepCount) {
+                progress.animateTo(
+                    1f,
+                    animationSpec = tween(
+                        durationMillis = ((1f - progress.value) * stepDuration).toInt(),
+                        easing = LinearEasing)
+                )
+                if (currentStepState.value + 1 <= stepCount - 1) {
+                    progress.snapTo(0f)
+                    currentStepState.value += 1
+                    onStepChanged(currentStepState.value)
+                }
+                else {
+                    onComplete()
+                }
+            }
+        }
+    }
+}
